@@ -21,10 +21,9 @@ export class Reader {
     /** The reader's buffer. */
     public buffer: Uint8Array;
 
-    /** Buffers we use to convert to and from floats and unsigned 32 bit integers. */
-    private convBuff = new ArrayBuffer(4);
+    private convBuff = new ArrayBuffer(8);
     private u8 = new Uint8Array(this.convBuff);
-    private f32 = new Float32Array(this.convBuff);
+    private f64 = new Float64Array(this.convBuff);
 
     constructor(content: Uint8Array, options?: {
         lookup?: Lookup
@@ -36,22 +35,19 @@ export class Reader {
 
     /** Unsigned 8 bit integer. */
     public byte(): number {
+        if (this.at >= this.buffer.length) throw new Error(`Out of bounds access!`);
         const val = this.buffer[this.at++];
-        if ((this.at) > this.buffer.length) throw new Error(`Tried setting at out of bounds! at=${this.at}`);
         return val;
     }
 
     /** LEB128, variable length decoding of an unsigned integer. */
     public vu(): number {
-        let out = 0;
-        let shift = 0;
+        let out = 0, shift = 0;
 
         do {
             out |= (this.buffer[this.at] & 127) << shift;
             shift += 7;
-        } while (this.buffer[this.at++] & 128);
-
-        if ((this.at) > this.buffer.length) throw new Error(`Tried setting at out of bounds! at=${this.at}`);
+        } while (this.byte() & 128);
 
         return out;
     }
@@ -65,48 +61,45 @@ export class Reader {
     /** Retrieves a string with its length stored in the front. */
     public string(): string {
         const strLen = this.vu();
-        if ((this.at + strLen) > this.buffer.length) throw new Error(`Tried setting at out of bounds! at=${this.at + strLen}`);
+        if ((this.at + strLen) > this.buffer.length) throw new Error(`Out of bounds access!`);
 
         let final = "";
-
         for (let i = 0; i < strLen; i++) {
             const byte = this.buffer[this.at++];
             switch (true) {
                 case (byte <= 0x7F):
                     final += String.fromCodePoint(byte);
                     break;
-
                 case ((byte & 0b11100000) === 0b11000000):
                     final += String.fromCodePoint(((byte & 0b00011111) << 6) | (this.buffer[this.at++] & 0b00111111));
                     break;
-
                 case ((byte & 0b11100000) === 0b11100000):
                     final += String.fromCodePoint(((byte & 0b00001111) << 12) | ((this.buffer[this.at++] & 0b00111111) << 6) |
                         (this.buffer[this.at++] & 0b00111111));
                     break;
-
                 case ((byte & 0b11110000) === 0b11110000):
                     final += String.fromCodePoint(((byte & 0b00000111) << 18) | ((this.buffer[this.at++] & 0b00111111) << 12) |
                         ((this.buffer[this.at++] & 0b00111111) << 6) | (this.buffer[this.at++] & 0b00111111));
                     break;
-
                 default:
-                    throw new Error("Error in decoding UTF-8: value out of bounds.");
+                    throw new Error("Invalid UTF-8 sequence.");
             }
         }
-
         return final;
     }
 
-
-    /** Retrieves integers/floats using 32 bit precision. */
+    /** Retrieves integers/floats using 64 bit precision. */
     public float(): number {
-        if ((this.at + 4) > this.buffer.length) throw new Error(`Tried setting at out of bounds! at=${this.at}`);
+        if ((this.at + 8) > this.buffer.length) throw new Error(`Tried setting at out of bounds! at=${this.at}`);
         this.u8[0] = this.buffer[this.at++];
         this.u8[1] = this.buffer[this.at++];
         this.u8[2] = this.buffer[this.at++];
         this.u8[3] = this.buffer[this.at++];
-        return this.f32[0];
+        this.u8[4] = this.buffer[this.at++];
+        this.u8[5] = this.buffer[this.at++];
+        this.u8[6] = this.buffer[this.at++];
+        this.u8[7] = this.buffer[this.at++];
+        return this.f64[0];
     }
 
     /** Retrieves many values, and can even do it recursively. */
@@ -136,6 +129,7 @@ export class Reader {
                 }
                 return arr;
             }
+
             case 7: { // Any object
                 const final: {
                     [key: string]: OABDATA
@@ -145,9 +139,10 @@ export class Reader {
                     let key: string;
                     const byte = this.buffer[this.at++];
                     switch (byte) {
-                        case 1:
+                        case 1: {
                             key = this.string();
                             break;
+                        }
                         case 2: {
                             key = this.lookup[this.vu()];
                             if (key === undefined) { // Something has gone terribly wrong.
@@ -158,7 +153,6 @@ export class Reader {
                         default:
                             throw new Error(`Unknown byte ${byte} in decoding an object.`);
                     }
-
                     final[key] = this.data();
                 }
                 return final;
@@ -177,7 +171,7 @@ export class Reader {
 
     /** Get the rest of the reader data after this.at.
      * 
-     * Uses `Uint8Array.prototype.subarray`.
+     * Uses `Uint8Array.prototype.subarray`
     */
     public rest(): Uint8Array {
         return this.buffer.subarray(this.at, this.buffer.length);
@@ -192,10 +186,9 @@ export class Writer {
     /** The buffer itself. */
     public buffer: number[];
 
-    /** Buffers we use to convert to and from floats and unsigned 32 bit integers. */
-    private convBuff = new ArrayBuffer(4);
+    private convBuff = new ArrayBuffer(8);
     private u8 = new Uint8Array(this.convBuff);
-    private f32 = new Float32Array(this.convBuff);
+    private f64 = new Float64Array(this.convBuff);
 
     constructor(options?: {
         lookup?: Lookup,
@@ -276,13 +269,17 @@ export class Writer {
         return this;
     }
 
-    /** Stores an integer/float using 32 bit precision. */
+    /** Stores an integer/float using 64 bit precision. */
     public float(num: number) {
-        this.f32[0] = num;
+        this.f64[0] = num;
         this.buffer.push(this.u8[0]);
         this.buffer.push(this.u8[1]);
         this.buffer.push(this.u8[2]);
         this.buffer.push(this.u8[3]);
+        this.buffer.push(this.u8[4]);
+        this.buffer.push(this.u8[5]);
+        this.buffer.push(this.u8[6]);
+        this.buffer.push(this.u8[7]);
         return this;
     }
 
@@ -349,11 +346,12 @@ export class Writer {
                 }
                 break;
             }
-            case "string": { // String
+
+            case "string": // String
                 this.buffer.push(9);
                 this.string(data);
                 break;
-            }
+
             default: // If none of these criteria are met, throw an error
                 throw new Error(`Unknown data type! ${typeof (data)}`);
         }
