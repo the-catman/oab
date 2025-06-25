@@ -1,70 +1,74 @@
 # OAB
 
-ObjectAB or OAB stands for Object to ArrayBuffer.
+OAB stands for Object to ArrayBuffer.
 
 ## Updates
 
 * `v1.0.0`: Library re-released.
-* `v1.0.1`: Added single character encoding using UTF-8, cleaned up code, added better comments.
-* `v1.1.0`: Fixed critical bug.
-* `v1.1.1`: Fixed edge case, code speedup.
 
-## Installation
+## Usage
 
-Copy [index.ts](./index.ts) into your project and use it.
+Copy [index.ts](./index.ts) into your project and import it.
 
-## Q&A
+Example:
 
-### What is this library?
+```ts
+import { Reader, Writer } from "./index.ts";
 
-This is a library for serializing JavaScript objects into a Uint8Array and back. However, I didn't originally come up with the idea of doing this.
+// Example: basic storing and retrieving of primitive data types
 
-### Is it like JSON?
+let writer = new Writer();
 
-In a way, yes. However, JSON is more versatile, widely supported, and readable. However, the output is very large. JSON is also not natively a text to bytecode encoder, which means that you have to use something like `TextEncoder` to transform the JSON output to a Uint8Array. Hence, the library.
+writer.string("Hello!").vu(123).vi(-123).vi(456).float(5.4).float(-4.5).byte(234);
 
-### Is it efficient?
+let reader = new Reader(writer.out());
 
-Run [test.ts](./test.ts) and see the results. It's around 3x slower than JSON but can achieve a smaller output size.
+console.log(reader.string(), reader.vu(), reader.vi(), reader.vi(),
+    reader.float(), reader.float(), reader.byte()); // Hello! 123 -123 456 5.400000095367432 -4.5 234
 
-### Is it reliable?
+// Example: basic storing and retrieving of objects
 
-I have tested this, and it most likely is reliable. If you do find an edge case that breaks this, please, by all means, open up a ticket. I'll try and solve the issue ASAP.
+writer = new Writer();
 
-## To-do list
+writer.data([1, 2, 3, [{ hello: 123 }, "hello hello 1234"]]);
 
-* Add double precision support.
-* Allow more flexibility while writing data (i.e. option to store as single precision or double precision, etc).
-* Fix testing bug with floating point numbers (minor).
+reader = new Reader(writer.out());
 
-## Pull requests and issues
+console.log(reader.data()); // [ 1, 2, 3, [ { hello: 123 }, "hello hello 1234" ] ]
+```
 
-Pull requests, issues, suggestions, and bug reports are welcome.
+Note: objects and primitive datatypes must be stored and retrieved in the same order, otherwise either your data will be corrupted, or the program will throw an error.
 
-## Object storing
+Similarly, the Lookup array must be the same on both the Writer and Reader.
+
+## Storing
 
 This library can store the following:
 
 * Nulls
 * Booleans
 * Strings
-* Objects 
 * Arrays
-* Integers (32 bits)
-* Floats (single precision)
+* Objects (HashMaps/Dictionaries) 
+* Integers (maximum of 32 bits)
+* Floats (casted to single precision)
 
 If a value is passed that does not match one of these data types, an error is thrown.
 
-## Notes
+## Q&A
 
-* Objects and primitive datatypes must be stored and retrieved in the same order, or your data will be corrupted, or the program will throw an error.
+### What is this library?
 
-    * Similarly, the Lookup array must be the same on both the Writer and Reader.
+This is a library for serializing JavaScript objects into a ByteArray and back.
 
-* This will underperform if you do not use the lookup table. In fact, JSON can achieve a somewhat similar output size but do it 3x faster.
+### How does it compare to JSON?
 
-* Do not use/access private methods/properties unless you know what you're doing.
+Run [test.ts](./test.ts) and see the results.
 
-## Examples
+It's around 3x slower than V8's implementation of JSON (JSON.stringify/.parse), which shouldn't come as too much of a shock given that V8's JSON is probably written in C++
 
-Have a look at [examples.ts](./examples.ts), and you can easily pick up what this library is about.
+JSON is widely supported, and human-readable, however it's not a binary serialization format, unlike my library.
+
+### Is it reliable?
+
+I have tested this, and it most likely is reliable. If you do find an edge case that breaks this, please, by all means, open up a ticket. I'll try and solve the issue ASAP.

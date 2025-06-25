@@ -1,11 +1,12 @@
 /** Lookup is shared between the receiver and the sender, and it's only use is for objects' keys.
 When both the receiver and the sender share the lookup, we don't need to send the object key as a string.
-Rather we can point out that both the receiver and the sender share it,
-so instead of a string, we put a number which corresponds to the lookup. This saves a lot of space.
+Rather we can point out that both the receiver and the sender share it, so instead of a string,
+we put a number which corresponds to the lookup. This saves a lot of space.
+The lookup is simply an array of every single key in your object. Really useful especially for games, where keys don't change much.
 */
 export type Lookup = string[];
 
-export type OABDATA = number | string | OABDATA[] | { [key: string]: OABDATA } | boolean | null;
+export type OABDATA = number | boolean | OABDATA[] | { [key: string]: OABDATA } | null | string;
 
 /**
  * For reading data from incoming packets.
@@ -22,8 +23,8 @@ export class Reader {
 
     /** Buffers we use to convert to and from floats and unsigned 32 bit integers. */
     private convBuff = new ArrayBuffer(4);
-    private f32 = new Float32Array(this.convBuff);
     private u8 = new Uint8Array(this.convBuff);
+    private f32 = new Float32Array(this.convBuff);
 
     constructor(content: Uint8Array, options?: {
         lookup?: Lookup
@@ -33,15 +34,10 @@ export class Reader {
         this.lookup = options?.lookup || [];
     }
 
-    /** Check whether or not we went out of bounds. */
-    public checkOOB(offset = 0) {
-        if ((this.at + offset) > this.buffer.length) throw new Error(`Tried setting .at out of bounds! ${this.at}, offset=${offset}`);
-    }
-
     /** Unsigned 8 bit integer. */
     public byte(): number {
         const val = this.buffer[this.at++];
-        this.checkOOB();
+        if ((this.at) > this.buffer.length) throw new Error(`Tried setting at out of bounds! at=${this.at}`);
         return val;
     }
 
@@ -55,7 +51,7 @@ export class Reader {
             shift += 7;
         } while (this.buffer[this.at++] & 128);
 
-        this.checkOOB();
+        if ((this.at) > this.buffer.length) throw new Error(`Tried setting at out of bounds! at=${this.at}`);
 
         return out;
     }
@@ -69,27 +65,28 @@ export class Reader {
     /** Retrieves a string with its length stored in the front. */
     public string(): string {
         const strLen = this.vu();
-        this.checkOOB(strLen);
+        if ((this.at + strLen) > this.buffer.length) throw new Error(`Tried setting at out of bounds! at=${this.at + strLen}`);
+
         let final = "";
+
         for (let i = 0; i < strLen; i++) {
-            const byte1 = this.buffer[this.at++];
-
+            const byte = this.buffer[this.at++];
             switch (true) {
-                case (byte1 <= 0x7F):
-                    final += String.fromCodePoint(byte1);
+                case (byte <= 0x7F):
+                    final += String.fromCodePoint(byte);
                     break;
 
-                case ((byte1 & 0b11100000) === 0b11000000):
-                    final += String.fromCodePoint(((byte1 & 0b00011111) << 6) | (this.buffer[this.at++] & 0b00111111));
+                case ((byte & 0b11100000) === 0b11000000):
+                    final += String.fromCodePoint(((byte & 0b00011111) << 6) | (this.buffer[this.at++] & 0b00111111));
                     break;
 
-                case ((byte1 & 0b11100000) === 0b11100000):
-                    final += String.fromCodePoint(((byte1 & 0b00001111) << 12) | ((this.buffer[this.at++] & 0b00111111) << 6) |
+                case ((byte & 0b11100000) === 0b11100000):
+                    final += String.fromCodePoint(((byte & 0b00001111) << 12) | ((this.buffer[this.at++] & 0b00111111) << 6) |
                         (this.buffer[this.at++] & 0b00111111));
                     break;
 
-                case ((byte1 & 0b11110000) === 0b11110000):
-                    final += String.fromCodePoint(((byte1 & 0b00000111) << 18) | ((this.buffer[this.at++] & 0b00111111) << 12) |
+                case ((byte & 0b11110000) === 0b11110000):
+                    final += String.fromCodePoint(((byte & 0b00000111) << 18) | ((this.buffer[this.at++] & 0b00111111) << 12) |
                         ((this.buffer[this.at++] & 0b00111111) << 6) | (this.buffer[this.at++] & 0b00111111));
                     break;
 
@@ -97,17 +94,18 @@ export class Reader {
                     throw new Error("Error in decoding UTF-8: value out of bounds.");
             }
         }
+
         return final;
     }
 
 
     /** Retrieves integers/floats using 32 bit precision. */
     public float(): number {
+        if ((this.at + 4) > this.buffer.length) throw new Error(`Tried setting at out of bounds! at=${this.at}`);
         this.u8[0] = this.buffer[this.at++];
         this.u8[1] = this.buffer[this.at++];
         this.u8[2] = this.buffer[this.at++];
         this.u8[3] = this.buffer[this.at++];
-        this.checkOOB();
         return this.f32[0];
     }
 
@@ -189,26 +187,28 @@ export class Reader {
 /** For writing data to outgoing packets. */
 export class Writer {
     /** The lookup. */
-    public lookup: Lookup;
-
-    /** Whether to console.warn when a lookup isn't found. */
-    public warnIfNoLookup: boolean;
+    public lookup: { [key: string]: number };
 
     /** The buffer itself. */
     public buffer: number[];
 
     /** Buffers we use to convert to and from floats and unsigned 32 bit integers. */
     private convBuff = new ArrayBuffer(4);
-    private f32 = new Float32Array(this.convBuff);
     private u8 = new Uint8Array(this.convBuff);
+    private f32 = new Float32Array(this.convBuff);
 
     constructor(options?: {
         lookup?: Lookup,
         warnIfNoLookup?: boolean
     }) {
+        this.lookup = {};
+        if (options?.lookup) {
+            for (let i = 0; i < options.lookup.length; i++) {
+                this.lookup[options.lookup[i]] = i;
+            }
+        }
+
         this.buffer = [];
-        this.lookup = options?.lookup || [];
-        this.warnIfNoLookup = options?.warnIfNoLookup ?? false;
     }
 
     /** Stores a single byte. */
@@ -219,10 +219,10 @@ export class Writer {
 
     /** LEB128, variable length encoding of an unsigned integer.
      * 
-     * All integers will be cast to unsigned, then stored.
+     * All integers will be cast to unsigned 32 bit integers, then stored.
      */
     public vu(num: number) {
-        num >>>= 0; // Cast to unsigned.
+        num >>>= 0; // Cast to unsigned 32 bits.
 
         do {
             let part = num & 0b01111111;
@@ -321,9 +321,9 @@ export class Writer {
                     this.buffer.push(6);
                     this.vu(data.length);
 
-                    for (let i = 0; i < data.length; i++) {
+                    for (let i = 0; i < data.length; i++)
                         this.data(data[i]);
-                    }
+
                 } else if (data !== null) {  // Any type of object other than null
                     const keys = Object.keys(data);
                     this.buffer.push(7);
@@ -331,13 +331,15 @@ export class Writer {
 
                     for (const key of keys) {
                         const value = data[key];
-                        const tableEnc = this.lookup.indexOf(key);
+                        const tableEnc = this.lookup[key];
 
-                        if (tableEnc === -1) { // Not found key
-                            this.buffer.push(1); this.string(key); // Store it as a string
-                            if (this.warnIfNoLookup) console.warn(`A key wasn't in the lookup table! ${value}.`);
+                        if (tableEnc === undefined) { // Not found key
+                            this.buffer.push(1);
+                            this.string(key); // Store it as a string
+                            // console.warn(`A key wasn't in the lookup table! ${value}.`);
                         } else { // Key found
-                            this.buffer.push(2); this.vu(tableEnc); // Store the index
+                            this.buffer.push(2);
+                            this.vu(tableEnc); // Store the index
                         }
 
                         this.data(value); // Store the value
