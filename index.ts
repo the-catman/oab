@@ -1,9 +1,11 @@
-/** Lookup is shared between the receiver and the sender, and it's only use is for objects' keys.
+/*
+INFO: Lookup is shared between the receiver and the sender, and its only use is for objects' keys.
 When both the receiver and the sender share the lookup, we don't need to send the object key as a string.
-Rather we can point out that both the receiver and the sender share it, so instead of a string,
-we put a number which corresponds to the lookup. This saves a lot of space.
-The lookup is simply an array of every single key in your object. Really useful especially for games, where keys don't change much.
+Rather we can point out that both the receiver and the sender share it, so instead of a string, we put a number which corresponds 
+to the lookup. This saves a lot of space. The lookup is simply an array of every single key in your object.
+Really useful especially for games, where keys don't change much.
 */
+
 export type Lookup = string[];
 
 export type OABDATA = number | boolean | OABDATA[] | { [key: string]: OABDATA } | null | string;
@@ -35,20 +37,19 @@ export class Reader {
 
     /** Unsigned 8 bit integer. */
     public byte(): number {
-        if (this.at >= this.buffer.length) throw new Error(`Out of bounds access!`);
-        const val = this.buffer[this.at++];
-        return val;
+        if (this.at >= this.buffer.length) throw new Error("Out of bounds access!");
+        return this.buffer[this.at++];
     }
 
     /** LEB128, variable length decoding of an unsigned integer. */
     public vu(): number {
-        let out = 0, shift = 0;
+        let out = 0, shift = 0, b = 0;
 
         do {
-            out |= (this.buffer[this.at] & 127) << shift;
+            b = this.byte();
+            out |= (b & 127) << shift;
             shift += 7;
-        } while (this.byte() & 128);
-
+        } while (b & 128);
         return out;
     }
 
@@ -61,7 +62,7 @@ export class Reader {
     /** Retrieves a string with its length stored in the front. */
     public string(): string {
         const strLen = this.vu();
-        if ((this.at + strLen) > this.buffer.length) throw new Error(`Out of bounds access!`);
+        if ((this.at + strLen) > this.buffer.length) throw new Error("Out of bounds access!");
 
         let final = "";
         for (let i = 0; i < strLen; i++) {
@@ -90,7 +91,7 @@ export class Reader {
 
     /** Retrieves integers/floats using 64 bit precision. */
     public float(): number {
-        if ((this.at + 8) > this.buffer.length) throw new Error(`Tried setting at out of bounds! at=${this.at}`);
+        if ((this.at + 8) > this.buffer.length) throw new Error("Out of bounds access!");
         this.u8[0] = this.buffer[this.at++];
         this.u8[1] = this.buffer[this.at++];
         this.u8[2] = this.buffer[this.at++];
@@ -104,7 +105,7 @@ export class Reader {
 
     /** Retrieves many values, and can even do it recursively. */
     public data(): OABDATA {
-        const header = this.buffer[this.at++];
+        const header = this.byte();
         switch (header) {
             case 1: // Positive numbers
                 return this.vu();
@@ -165,7 +166,7 @@ export class Reader {
                 return this.string();
 
             default: // Something has gone terribly wrong.
-                throw new Error(`Unexpected index! Got ${header}`);
+                throw new Error(`Unknown data header! Got header ${header}, which doesn't correspond to any data type.`);
         }
     }
 
@@ -195,7 +196,7 @@ export class Writer {
         warnIfNoLookup?: boolean
     }) {
         this.lookup = {};
-        if (options?.lookup) {
+        if (options?.lookup) { // Convert into hashmap for O(1) lookup time.
             for (let i = 0; i < options.lookup.length; i++) {
                 this.lookup[options.lookup[i]] = i;
             }
@@ -232,11 +233,10 @@ export class Writer {
      * Stores the sign in a single bit.
      */
     public vi(num: number) {
-        return this.vu(num < 0 ? (~num << 1 | 1) : (num << 1));
+        return this.vu(num < 0 ? (~(num << 1)) : (num << 1));
     }
 
-    /** Stores the length of the string instead of putting a null byte at the end,
-     * since the string with null termination obviously can't store null characters.
+    /** Stores the length of the string instead of putting a null byte at the end.
      */
     public string(str: string) {
         this.vu(str.length);
@@ -333,7 +333,7 @@ export class Writer {
                         if (tableEnc === undefined) { // Not found key
                             this.buffer.push(1);
                             this.string(key); // Store it as a string
-                            // console.warn(`A key wasn't in the lookup table! ${value}.`);
+                            console.warn(`A key wasn't in the lookup table! "${key}".`);
                         } else { // Key found
                             this.buffer.push(2);
                             this.vu(tableEnc); // Store the index
@@ -353,7 +353,7 @@ export class Writer {
                 break;
 
             default: // If none of these criteria are met, throw an error
-                throw new Error(`Unknown data type! ${typeof (data)}`);
+                throw new Error(`Cannot store ${typeof (data)}`);
         }
         return this;
     }
